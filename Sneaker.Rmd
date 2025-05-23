@@ -1,0 +1,892 @@
+---
+title: "113-2 Sneaker Analysis"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup} 
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+{
+stars <- function(beta, pval, sig=2, zero = 2) {
+  #(print("in stars"))
+  st <- function(p){
+      if (is.na(p))
+        r <- "NA"
+      else {
+        if (p<0.001)     r <- "***"
+        else if (p<0.01) r <- "** "
+        else if (p<0.05) r <- "*  "
+        else if (p<0.1)  r <- ".  "
+        else r <- "   "    
+      }
+  }
+  # round2 <- function(val,sig) {
+  #   ret <- paste0(round(beta,sig))
+  #   paste0(ret,paste0(rep_len("0",sig),collapse=""))
+  # }
+    
+  if (is.matrix(beta) | is.vector(beta))
+  {
+    ret <- mapply( FUN = function(beta,pval,sig){
+      # paste0(round(beta,sig),st(pval)) }, 
+      paste0(format(round(beta,sig),nsmall=zero),st(pval)) }, 
+          beta, pval, sig)
+    beta[] <- ret
+    return(data.frame(beta))
+  }
+  else {
+    #paste0(round(beta,sig),nsmall=zero,st(pval))
+    paste0(format(round(beta,sig),nsmall=zero),st(pval))
+  }
+}
+
+corr <- function(x,y=NULL,type="pearson",sort=FALSE,kable=FALSE)
+#type=c("pearson","spearman")
+{
+  # y <- tolCountrysum
+  # x <- GLOLCA$posterior 
+  # type="pearson"
+  
+  #biserialresult <- biserial(y,x) #continuous y variable and a dichotmous x variable
+  
+  if(is.null(y)) {
+    ret <- Hmisc::rcorr(as.matrix(data.frame(x)),type=type)
+    
+    r <- ret$r
+    p <- ret$P
+  }
+
+  else {
+    ret <- Hmisc::rcorr(as.matrix(data.frame(x,y)),type=type)
+    dim <- 1
+    if(!is.null(ncol(x)))
+      dim <- 1:ncol(x)
+
+    r <- ret$r[-dim,dim]
+    p <- ret$P[-dim,dim]
+  }
+
+  
+  
+  #ret2 <- cbind(stars(r,p), PopulationMean=apply(y, MARGIN = 2, FUN = weighted.mean, SES$weights))
+  ret2 <- stars(r,p)      
+  
+  if(sort == TRUE){
+      maxGroup <- apply(r,1,which.max)
+      
+      order <- rep(1,nrow(r))
+
+      for (x in unique(maxGroup)) {
+         order[maxGroup == x] <- r[maxGroup == x,x]
+      }
+
+      # order <-  ifelse(maxGroup==1,r[,1],
+      #           ifelse(maxGroup==2,r[,2],
+      #           ifelse(maxGroup==3,r[,3],
+      #           ifelse(maxGroup==4,r[,4],NA))))
+
+      ret2 <- ret2[order(maxGroup,-order),]
+  }
+
+  if(kable == TRUE){
+      (kable(ret2,#[order(r[,2]),],
+        caption = "corr: Tol not extend to SEA
+        Spearman correlation for tolerance is not normal", digits = 2))
+  } else
+    ret2
+
+}
+
+reg <- function (Y, X, formula=NULL, data=NULL, model = "lm", sig=3, 
+                 addCoef=NULL, addPVal=NULL, addAnova=NULL, sortBy=NULL,
+                 weights=NULL, subset=NULL, caption = NULL,
+                 addSE=TRUE, addFit=TRUE,unstar=FALSE, simpleReg=FALSE, suppressByPVal=FALSE, long=T, kable=TRUE) 
+#sortBy = sort by "colname" (e.g. "r2 adj","r2"), or column number.
+{
+  #addCoef such as "Pr(>|t|)", "Estimate"
+  #for debug
+  # model = "lm"; sig=3; addSE=TRUE; addFit=TRUE; formula=NULL;
+  # kable=TRUE; addCoef=NULL; addPVal=NULL; addAnova=NULL; sortBy=NULL; long=F; addRSQ=T
+  # suppressByPVal=FALSE; weights=NULL; unstar=FALSE; subset=NULL; transpose=NULL; caption = NULL
+  
+
+  
+  regstars <- function(p, val = NULL, simplify = TRUE, stars = TRUE){
+    if (is.na(p))
+      r <- "NA"
+    else {
+      if (p<0.001)     r <- "***"
+      else if (p<0.01) r <- "** "
+      else if (p<0.05) r <- "*  "
+      else if (p<0.1)  r <- ".  "
+      else r <- "   "    
+    }
+    
+    
+    if (!is.null(val) & simplify == TRUE) {
+      if (val > 0 & r != "")      r <- paste0("+",r)
+      else if (val < 0 & r != "") r <- paste0("-",r)
+    }
+    else if (!is.null(val) & simplify == FALSE){
+      r <- paste0(round(val,3),r)
+    }
+    
+    if (stars == FALSE)
+      r <- ""#p
+    return (r)
+  }
+  
+  runlm <- function( y, formula, data, model, sig, addSE, addRSQ=T, addCoef, addPVal, addAnova, addFit) {
+    #for debug:
+    #y=Y[,1]
+    
+
+    newdata <- data.frame(data, y=y) #,weights=weights)
+
+    if (model == "lm") {
+      # a <- summary(lm    ( formula , data=newdata, weights=weights))  
+      # b <- car::Anova  (lm    ( formula , data=newdata, weights=weights),type=2)
+      #(print("before lm"))
+      #(str(weights))
+      mod <- lm ( formula , data=newdata, weights=weights)
+      #(print("inside lm"))
+      a <- summary(mod)
+      #(print("post lm"))
+      b <- car::Anova(mod,type=2)
+    } else if (model == "nb") {
+      a <- summary(MASS::glm.nb( formula , data=newdata, weights=weights) )  
+    } else if (model == "lr") {
+      mod <-        glm   ( formula , data=newdata, weights=weights, family=binomial(link="logit"))
+      a <- summary(mod)
+      b <- car::Anova (mod, type=2, test.statistic="LR") #test.statistic="LR", "Wald", "F"
+    } else if (model == "poisson") {
+      a <- summary(glm   ( formula , data=newdata, weights=weights, family=poisson(link="log")))  
+    } else if (model == "or") {
+      a <- summary(ordinal::clm   ( formula, data=newdata, weights=weights))
+    } else if (model == "lme") {
+      a <- summary(lme   ( formula, data=newdata, random = ~1|City, na.action=na.exclude))
+      a$coefficients <- a$tTable
+      colnames(a$coefficients) <- c("Estimate","Std. Error","DF","t-value","Pr")
+    }
+    
+    #(print("after all lm"))
+    #a <- summary(lm( Pn$M46.OperaPek~SES$Gender)) #for bedug
+    #a <- summary(glm( MUSIC_Likes$M46.OperaPek~SES$Gender,family=binomial(link="logit"))) #for bedug
+    
+    if (unstar==TRUE) {
+      ret <- as.data.frame(t(a$coefficients[,"Estimate"]))
+      name <- colnames(ret)
+      ret <- cbind(ret,t(a$coefficients[,grep("^Pr", colnames(a$coefficients))]))
+      colnames(ret) <- c(name, paste0("p-",name)) 
+    } else {
+      #(print("before star"))
+      ret <- data.frame( #mapply passes same index of both args to FUN
+         # t(mapply(FUN = function(beta,pval,sig){paste0(format(round(beta,sig),nsmall=sig),regstars(pval)) },
+         #                 a$coefficients[,"Estimate"],
+         #         a$coefficients[,grep("^Pr", colnames(a$coefficients))],
+         #         sig))
+         t(stars(a$coefficients[,"Estimate"],
+                 a$coefficients[,grep("^Pr", colnames(a$coefficients))],
+                 sig,sig))
+      )
+      names(ret) <- rownames(a$coefficients)
+      #(print("after star"))
+      ret <- ret[,c(2:ncol(ret),1)] #intercept appears last
+    }
+    #In either case, ret has been created
+    
+    
+    if (addSE){
+      SE <- t( paste0("(",format(round(a$coefficients[,"Std. Error"],sig),nsmall=sig),")"))
+      colnames(SE) <- colnames(t( a$coefficients[,"Std. Error"]))
+      
+      SE <- SE[,c(2:ncol(SE),1)] #intercept appears last
+      
+      #Combine in alternation
+      temp <- cbind(ret[1], SE[1])
+      for (i in 2:nrow(a$coefficients)){
+        temp <- cbind(temp,ret[i], SE[i])
+      }
+      ret <- temp
+    }
+    
+    
+    if (isTRUE(addFit)) {
+      if (model == "lm") {
+        ret <- cbind(ret,
+                     r2     = round(a$r.squared,3), 
+                     adj.r2 = round(a$adj.r.squared,3),
+                     n = length(resid(a))
+        )       
+      } else if (model == "nb") {
+        ret <- cbind(ret,
+                     #r.squared     = round(a$r.squared,3), 
+                     AIC = round (a$aic, sig),
+                     loglikelihood = round(a$twologlik,sig),
+                     n = length(a$deviance.resid)
+        )      
+      } else if (model == "poisson") {
+        ret <- cbind(ret,
+                     #r.squared     = round(a$r.squared,3), 
+                     AIC = round (a$aic, sig),
+                     n = length(a$deviance.resid)
+        )   
+      } else if (model == "lr") {
+        ret <- cbind(ret,
+                     #r.squared     = round(a$r.squared,3), 
+                     AIC = round (a$aic, sig),
+                     n = length(a$deviance.resid) #length(resid(a))
+        )      
+      }
+    }
+    
+    if (!is.null(addCoef))
+      ret <- cbind(ret, Coef = a$coefficients[,"Estimate"][nrow(a$coefficients)])
+    #a$coefficients[,addCoef][length(a$coefficients[,addCoef])])
+    
+    if (!is.null(addPVal))
+      if (model == "lm") {
+        ret <- cbind(ret, 
+                     t      = t(a$coefficients[,grep("^Pr", colnames(a$coefficients))])
+
+        )
+      }else {
+        ret <- cbind(ret, 
+                     t      = t(a$coefficients[,grep("^Pr", colnames(a$coefficients))])
+        )
+      }
+    
+    if (!is.null(addAnova))
+      if (model == "lm") {
+        F <- b$`F value`[1:(length(b$`F value`)-1)]
+        P <- b$`Pr(>F)`[1:(length(b$`F value`)-1)]
+        names(F) <- names(P) <- attr(a$terms,"term.labels")
+
+        
+        ret <- data.frame(t(mapply(
+          FUN = function(beta,pval,sig){paste0(round(beta,sig),regstars(pval,stars = !unstar)) },  #1: "0.02***"
+          F,
+          P,
+          sig)))
+        
+        
+        # ret <- data.frame(#cbind(ret, 
+        #              F      = t(F),
+        #              'Pr(>F)'= t(P),
+        #              'Pf'   = t(st),
+        #              check.names=FALSE
+        # )
+      } 
+    else if (model == "lr") {
+      
+      temp <- names(ret)#
+      
+      ret <- data.frame(t(c(
+        mapply(FUN = function( beta,pval,sig){
+          paste0(round(beta,sig), regstars(pval,stars = !unstar))      },
+          b$`LR Chisq`, b$`Pr(>Chisq)`, sig),     #1: "0.02***"
+        b$Df
+      )),
+      ret)
+      
+      names(ret) <- c(paste0("LRChisq",rownames(b)),
+                      paste0("Df",rownames(b)),
+                      temp)
+      
+      if (!is.null(addPVal)) {
+        temp <- names(ret)   #a shorter vector
+        ret <- data.frame(t(unlist(b)),ret) 
+        names(ret) <- c( paste0(names(unlist(b))," ",rownames(b)), temp) #a longer vector
+      }
+    }
+    
+    
+    ret 
+  }
+  
+  runlmIND <- function(y, formula, data, model, sig, addSE, addRSQ, addCoef, addPVal, addAnova) {
+
+    t <- terms(formula)
+
+    #The first term
+    temp <- runlm(y,t[1], data, model, sig, addSE, addRSQ, addCoef, addPVal, addAnova, addFit=F)
+    ret <- temp [1: (length(temp)-2)]  #Remove the intercept
+    
+    for( i in 2:length(attr(t,"term.labels"))) {  # -1 because y is a term
+      temp <- runlm(y,t[i], data, model, sig, addSE, addRSQ, addCoef, addPVal, addAnova, addFit=F)
+      ret <- data.frame(ret,
+                   temp[1: (length(temp)-2)] ,
+                   check.names = F)
+    }
+    ret
+  }
+  
+  if(!is.data.frame(Y)) #Wrapper so that function can also take a single vector
+    Y <- data.frame(Y)
+
+
+  if (is.null(weights)){
+    # weights=rep(1,NROW(Y))  #weights=1 #
+    data$weights=rep(1,NROW(Y))  #weights=1 #
+  }
+  
+  if(!is.null(subset)) {
+    Y <- subset(Y,subset)
+    data <- subset(data,subset)
+    # weights <- subset(weights,subset)
+  }
+  
+  if (is.null(formula)) {
+    if(!is.data.frame(X)) #Wrapper so that function can also take a single vector
+      X <- data.frame(X)
+    
+    formula <- reformulate(names(X), response = "y")
+    data <- data.frame(X,Y)
+  }
+  
+  if (simpleReg == T) {
+    ret <- do.call(rbind,lapply(X = Y, formula, FUN = runlmIND, data, model, sig, addSE, addRSQ, addCoef, addPVal, addAnova))
+  } else {
+    ret <- do.call(rbind,lapply(X = Y, formula, FUN = runlm, data, model, sig, addSE, addRSQ, addCoef, addPVal, addAnova, addFit))  #for each row (each element of Y), call function #, weights
+  }
+    
+
+
+  
+  if (!is.null(sortBy)) {
+    if (is.numeric(sortBy)) {
+      if (sortBy < 0) {
+        ret <- ret[order( ret[, abs(sortBy)]),]
+      } else if (sortBy > 0) {
+        ret <- ret[order(-ret[, sortBy]),]
+      } else
+        warning("sortBy = 0: cannot sort")
+    }
+    if (is.character(sortBy)) {
+      if (sortBy %in% colnames(ret))
+      { #handles columns which has been starred and turned into text
+        # ret <- ret[order( -as.numeric(gsub("*","",ret[, which(colnames(ret)==sortBy)],fixed=T))),]
+        temp <- gsub("*","",ret[, which(colnames(ret)==sortBy)],fixed=T)
+        temp <- gsub(".","",temp,fixed=T)
+        ret <- ret[order( -as.numeric(temp)),]
+                
+                
+      } else
+        warning("No such column in sortBy")
+    }
+  }
+  
+  #as.numeric(gsub("*","","0.031***",fixed=T))
+  
+  if (suppressByPVal==TRUE & !is.null(addPVal)) 
+    ret <- ret[ret[, "PVal"]<0.05,]
+  
+  # if(is.null(kable)) {
+  #   ret
+  # }  else if(!is.null(transpose)) {
+  #   (kable(t(ret),align = 'r', caption=caption))
+  # } else
+  #   (kable(ret,align = 'r', caption=caption)) 
+  
+  if(isTRUE(long)) {
+    ret <- t(ret)
+  }
+  
+  if(!isTRUE(kable)) {
+    ret
+  }
+  else
+    (kable(ret,align = 'r', caption=caption)) 
+}
+}
+```
+
+
+# Loading and Cleaning Data
+```{r load, echo=FALSE, message = FALSE}
+DATA <- read.csv("113-2 Questionnaire.csv")
+#colnames(DATA)
+
+brands <- c("Nike","Adidas","Puma","NewBalance","Mizuno",
+            "Vans","UnderArmour","ASICS","Converse","Brooks")
+brands_neworder <- rev(c("Nike","Adidas","NewBalance","Converse",
+                     "Puma","ASICS","Vans", "UnderArmour", "Mizuno", "Brooks")) #Based on consideration
+attributes <- data.frame(c("High Price 高價","Low Price 低價"),
+                       c("Performance-focused 性能導向","Fashion-focused 時尚導向"),
+                       c("Heritage 傳統","Modern 現代"),
+                       c("Mass-market 大眾","Niche 小眾"),
+                       c("Luxury 奢華","Budget 實惠"),
+                       c("Japanese 日系","Not Japanese 非日系"),
+                       c("Trendy 時尚","Timeless classic 經典"),
+                       c("Streetwear 街頭風格","Sportswear 運動風格"),
+                       c("Retro aesthetic 復古設計","Futuristic 未來設計"),
+                       c("Basketball 籃球專業","Running 跑步專業"),
+                       c("Casual 休閒穿搭","Performance 運動性能"),
+                       c("Minimalist 極簡設計","Bold 大膽設計"),
+                       c("Durability 耐用優先","Style-focused 風格優先"),
+                       c("Widespread availability 廣泛供應","Exclusive/limited edition 限量發售"))
+colnames(attributes) <- paste0("Attribute",rep(1:14))
+
+
+
+#
+
+convert_num <- function(df) {
+  df[] <- lapply(df, function(col) {
+    col[col == "7-9"] <- "8"  # Replace "7-9" with "8"
+    col[col == "4-6"] <- "7"  
+    col[col == "≥10"] <- "15"  
+    as.numeric(col)  # Convert to numeric
+  })
+  colnames(df) <- brands
+  return(df)
+}
+Usage1Owned    <- convert_num(DATA[,14:(14+9)])
+Usage2Owning   <- convert_num(DATA[,24:(24+9)])
+Usage3Consider <- as.data.frame(ifelse(DATA[,4:(4+9)]=="Would consider",1,0))
+colnames(Usage3Consider) <- brands
+
+
+Usage1Owned$type    <- "1.Owned"
+Usage2Owning$type <- "2.CurrentlyOwn"
+Usage3Consider$type <- "3.Consider"
+
+Funnel <- rbind(Usage1Owned, Usage2Owning, Usage3Consider)
+rm(Usage1Owned, Usage2Owning, Usage3Consider)
+
+#
+convert_price <- function(df) {
+  df[] <- lapply(df, function(col) {
+    col[col == "< NT$1000 (US $<30)"] <- "500"  # Replace 
+    col[col == "NT$1000-1999 (US$30-59)"] <- "1500"  
+    col[col == "NT$2000-2999 (US$60-89)"] <- "2500"  
+    col[col == "NT$3000-3999 (US$90-119)"] <- "3500"  
+    col[col == "NT$4000-4999 (US$120-149)"] <- "4500"  
+    col[col == "NT$5000-6999 (US$150-219)"] <- "6000"  
+    col[col == ">NT$7000 (>US$210)"] <- "8000"                  
+    as.numeric(col)  # Convert to numeric
+  })
+  colnames(df) <- brands
+  return(df)
+}
+BrandPrice    <- convert_price(DATA[,34:(34+9)])
+
+#
+convert_Likert <- function(df,index) {
+  left  <- attributes[1,index]
+  right <- attributes[2,index]
+  
+  df[] <- lapply(df, function(col) {
+    col[col == left]     <- "+2"  # Replace 
+    col[col == "<"]      <- "1"  
+    col[col == "Middle"] <- "0"  
+    col[col == ">"]      <- "-1"  
+    col[col == right]    <- "-2"               
+    as.numeric(col)  # Convert to numeric
+  })
+  colnames(df) <- brands
+  df$attributes <- paste0(formatC(index, width = 2, flag = "0"),". ", left,"(+) vs ",right,"(-)")
+  return(df)
+}
+Brand <- rbind(
+  convert_Likert(DATA[,44:(44+9)], 1),
+  convert_Likert(DATA[,54:(54+9)], 2),
+  convert_Likert(DATA[,64:(64+9)], 3),
+  convert_Likert(DATA[,74:(74+9)], 4),
+  convert_Likert(DATA[,84:(84+9)], 5),
+  convert_Likert(DATA[,94:(94+9)], 6),
+  convert_Likert(DATA[,104:(104+9)], 7),
+  convert_Likert(DATA[,114:(114+9)], 8),
+  convert_Likert(DATA[,124:(124+9)], 9),
+  convert_Likert(DATA[,134:(134+9)], 10),
+  convert_Likert(DATA[,144:(144+9)], 11),
+  convert_Likert(DATA[,154:(154+9)], 12),
+  convert_Likert(DATA[,164:(164+9)], 13),
+  convert_Likert(DATA[,174:(174+9)], 14)
+)
+attribute_labels <- unique(Brand$attributes)
+
+#PurchaseCriteria
+convert_purchaseCriteria <- function(df) {
+  df[] <- lapply(df, function(col) {
+    col[col == "Strongly Left"] <- "2"  # Replace 
+    col[col == "Slightly Left"] <- "1"  
+    col[col == "Middle"] <- "0"  
+    col[col == "Slightly Right"] <- "-1"  
+    col[col == "Strongly Right"] <- "-2"               
+    as.numeric(col)  # Convert to numeric
+  })
+  colnames(df) <- paste0("criteria",1:14)
+  return(df)
+}
+PurchaseCriteria <- convert_purchaseCriteria(DATA[,184:197])
+colnames(PurchaseCriteria) <- attribute_labels
+#
+Respondent <- data.frame(
+              email = DATA[,2],
+              studentid = DATA[,3],
+              TotalSpendingC = DATA[,198],
+              PurchasePYearC = DATA[,199],
+              Region = DATA[,200],
+              Student = DATA[,201],
+              Gender = DATA[,202],
+              AgeC = DATA[,203])
+Respondent$TotalSpending <- ifelse(Respondent$TotalSpendingC =="NT$0 (US$0)",0,
+                            ifelse(Respondent$TotalSpendingC =="NT$0-1999 (US$0-59)",1000,
+                            ifelse(Respondent$TotalSpendingC =="NT$2000-4999 (US$60-149)",3500,
+                            ifelse(Respondent$TotalSpendingC =="NT$5000-9999 (US$150-299)",7500,
+                            ifelse(Respondent$TotalSpendingC =="NT$10000-19999 (US$300-599)",15000,
+                            ifelse(Respondent$TotalSpendingC =="NT$20000-39999 (US$600-1199)",25000,
+                            ifelse(Respondent$TotalSpendingC =="NT$40000-79999 (US$1200-2399)",60000,
+                            ifelse(Respondent$TotalSpendingC ==">NT$80000 (US$2400)",90000,NA))))))))
+
+Respondent$PurchasePYear <- ifelse(Respondent$PurchasePYearC =="0",0,
+                            ifelse(Respondent$PurchasePYearC =="1",1,
+                            ifelse(Respondent$PurchasePYearC =="2",2,
+                            ifelse(Respondent$PurchasePYearC =="3-4",3.5,
+                            ifelse(Respondent$PurchasePYearC =="5-6",5.5,
+                            ifelse(Respondent$PurchasePYearC =="7-9",8,
+                            ifelse(Respondent$PurchasePYearC =="10-12",11,
+                            ifelse(Respondent$PurchasePYearC ==">12",13,NA))))))))
+
+Respondent$Age <-           ifelse(Respondent$AgeC =="<18",NA,
+                            ifelse(Respondent$AgeC =="18",18,
+                            ifelse(Respondent$AgeC =="19",19,
+                            ifelse(Respondent$AgeC =="20",20,
+                            ifelse(Respondent$AgeC =="21",21,
+                            ifelse(Respondent$AgeC =="22",22,
+                            ifelse(Respondent$AgeC =="23",23,
+                            ifelse(Respondent$AgeC =="24",24,
+                            ifelse(Respondent$AgeC =="25-27",26,       
+                            ifelse(Respondent$AgeC =="28-30",29,         
+                            ifelse(Respondent$AgeC =="≥31",32,NA  )))))))))))
+```
+
+# Descriptive Statistics
+## Funnel
+```{r, echo=FALSE, message = FALSE}
+library(ggplot2)
+library(showtext)
+library(knitr)
+showtext_auto()
+
+#Funnel
+Funnel_long <- reshape2::melt(Funnel, id.vars=c("type"),variable.name = "brands", value.name = "val")
+plotdata <- aggregate( val  ~ . , data=Funnel_long, mean)
+plotdata$brands <- factor(plotdata$brands, levels=brands_neworder)
+ggplot(data = plotdata, aes(y=brands, x=val)) +
+  geom_col() + facet_wrap(vars(type),scales="free_x") +
+  labs(title = "Number of sneakers ever owned, currently owned, 
+  and percentage of persons who'd consider the brand")
+kable(reshape2::dcast(plotdata, brands ~ type,value.var = "val"),digits = 2)
+
+```
+
+## Brand Price
+```{r, echo=FALSE, message = FALSE }
+
+plotdata <- data.frame(Brand = brands, Price = colMeans(BrandPrice))
+plotdata$Brand <- factor(plotdata$Brand, levels=brands_neworder)
+ggplot(data=plotdata, aes(y=Brand, x=Price)) +
+  geom_col() + 
+  labs(title = "Perceived price of each brand (NTD)") 
+kable(plotdata,digits = 2)
+```
+
+## Brand Perception
+```{r, echo=FALSE, message = FALSE, fig.height=20, fig.width=10}
+Brand_long <- reshape2::melt(Brand, id.vars=c("attributes"),variable.name = "brands", value.name = "val")
+
+Brand_long <- rbind(Brand_long,
+                    data.frame(attributes=attribute_labels,
+                               brands="UserPreference",
+                               val=colMeans(PurchaseCriteria))
+                    )
+
+BrandPerception <- aggregate( val  ~ . , data=Brand_long, mean)
+BrandPerception$brands <- factor(BrandPerception$brands, levels=c("UserPreference",brands_neworder))
+ggplot(data = BrandPerception, aes(y=brands, x=val)) +
+  geom_col() + facet_wrap(vars(attributes), ncol=2)
+
+kable(reshape2::dcast(BrandPerception, attributes ~ brands),digits = 2)
+
+
+```
+
+
+
+## User Behavior
+```{r, echo=FALSE, message = FALSE }
+knitr::kable(data.frame(SpendingPerYear=mean(Respondent$TotalSpending),
+           PurchasesPerYear=mean(Respondent$PurchasePYear)))
+```
+
+# 1.FA on brands
+``` {r FAb, eval=T, echo=FALSE, message=FALSE}
+library(psych)
+colnames(Brand)
+Brand$id <- 1:nrow(DATA)
+temp <- reshape2::melt(Brand, id.vars=c("attributes","id"),variable.name = "brands", value.name = "val")
+temp <- reshape2::dcast(temp, id + brands ~ attributes, value.var = "val")
+temp <- temp[,-c(1,2)]
+colnames(temp)
+
+
+scree(temp)
+fa <- fa(r = temp, nfactors = 5, rotate = "varimax") 
+summary(fa)
+fa$loadings #fa outcome
+
+#Scoring
+fs <- factor.scores(x = temp,f = fa)
+
+fs$weights
+
+BrandPerception <- BrandPerception[1:140,]
+BrandPerception_wide <- reshape2::dcast(BrandPerception, attributes ~ brands, value.var = "val")
+
+
+brandScores <- colSums(fs$weights * BrandPerception_wide[,2]) #Nike,etc
+for (i in 3:11) {
+   brandScores <- rbind(brandScores,
+                        colSums(fs$weights * BrandPerception_wide[,i])) 
+}
+rownames(brandScores) <- brands_neworder
+brandScores <- data.frame(brandScores)
+
+brandScores$brands <- rownames(brandScores)
+brandScores_long <- reshape2::melt(brandScores, id.vars=c("brands"),variable.name = "Factor", value.name = "val")
+brandScores_long$brands <- factor(brandScores_long$brands,
+                           levels=brands_neworder)
+
+ggplot(data = brandScores_long, aes(y=brands, x=val)) +
+  geom_col() + facet_wrap(vars(Factor),scales="free_x") +
+  labs(title = "Performance of each brand on each factor")
+```
+
+## 2. Meaning of each factor
+``` {r FAb2, eval=T, message=FALSE, echo=FALSE, fig.height=8, fig.width=10}
+###
+
+plotdata <- data.frame(fs$weights)
+plotdata$attributes <- rownames(plotdata)
+plotdata <- reshape2::melt(plotdata, id.vars="attributes", value.var = "val")
+
+ggplot(data = plotdata, aes(y=attributes, x=value)) +
+  geom_col() + facet_wrap(vars(variable),scales="free_x") +
+  labs(title = "Meaning of each factor")
+```
+
+
+## 3. Who likes what
+``` {r, eval=T, message=FALSE, fig.height=8, fig.width=10}
+# summary(lm(PurchaseCriteria$`03. Heritage 傳統(+) vs Modern 現代(-)` ~
+#      Respondent$Region + Respondent$Student + Respondent$Gender + Respondent$Age + Respondent$TotalSpending + Respondent$PurchasePYear))
+# 
+# X <- data.frame(Respondent$Region, Respondent$Student, Respondent$Gender, Age=Respondent$Age, Respondent$TotalSpending, Respondent$PurchasePYear)
+# 
+# reg(PurchaseCriteria[,1:5], X,long = T)
+# 
+# 
+# #Brand$Adidas[Brand$attributes==attribute_labels[3]]
+#   ggplot(mapping = aes(y=Funnel_long$, x=Respondent$Student)) +
+#   geom_violin() # + facet_wrap(vars(Factor),scales="free_x") +
+#   #labs(title = "Performance of each brand on each factor")
+# 
+#   
+#   ggplot(mapping = aes(y=Respondent$PurchasePYear, x=X$Age)) +
+#   geom_smooth() # + facet_wrap(vars(Factor),scales="free_x") +
+#   #labs(title = "Performance of each brand on each factor")
+```
+
+
+
+
+```{r analysis2, eval=F}
+# Detailed analysis
+## PCA
+library(factoextra)
+#PurchaseCriteria
+data.pca <- princomp(PurchaseCriteria)
+#summary(data.pca)
+fviz_eig(data.pca, addlabels = TRUE)
+fviz_pca_var(data.pca, col.var = "black",axes = 1:2)
+fviz_cos2(data.pca, choice = "var", axes = 1:2)
+fviz_pca_var(data.pca, col.var = "cos2",
+            gradient.cols = c("black", "orange", "green"),
+            repel = TRUE)
+```
+
+
+
+
+``` {r FA, eval=F}
+## Pleasing evaluator
+BrandPerception_wide <- reshape2::dcast(BrandPerception, brands ~ attributes , value.var = "val")
+(BrandPerception_wide)
+
+
+
+
+#distance with brand
+brandDistance <- function (test) {
+  x <- rbind(test, BrandPerception_wide[,-1])
+  result <- as.matrix( stats::dist(x))[-1,1] #column 11
+  names(result) <- brands
+  result #distance with brand
+}
+brandDistance <- function (newBrand, user) {
+  x <- rbind(user, newBrand, BrandPerception_wide[,-1])
+  result <- as.matrix( stats::dist(x))[-1,1] #column 1
+  names(result) <- c("new brand",brands)
+  result #distance with brand
+}
+closestBrand <- function (newBrand, user) {
+  c("new brand",brands)[which.min(brandDistance(newBrand, user))]
+}
+
+#rep(0,14) #test with empty
+newBrand <- BrandPerception_wide[1,-1] #test with Nike
+newBrand <- round(newBrand,digits=1)
+user <- round(newBrand,digits=3)
+user <- PurchaseCriteria[3,]
+
+brandDistance(newBrand, user)
+closestBrand(newBrand, user)
+
+
+#distance with user
+# x <- rbind(PurchaseCriteria,test)
+# result <- as.matrix( stats::dist(x))[-1,1] #column 11
+# sum(result)
+
+purchaseDecision <- data.frame()
+for (i in 1:length(DATA[,1])){ #for every user
+  purchaseDecision <- rbind(purchaseDecision,
+                            closestBrand(newBrand,
+                                         PurchaseCriteria[i,]
+                                         ))
+}
+purchaseDecision
+table(purchaseDecision)
+
+```
+
+
+
+``` {r FA2, eval=F}
+#FA
+library(psych)
+
+
+scree(PurchaseCriteria)
+fa <- fa(r = PurchaseCriteria, nfactors = 5, rotate = "varimax") 
+summary(fa)
+fa$loadings #fa outcome
+#corr(x=PurchaseCriteria)
+
+#Scoring
+PurchaseCriteria
+fs <- factor.scores(x = PurchaseCriteria,f = fa)
+fs
+fs$scores
+colSums(fs$scores)
+
+#using weights
+fs$weights
+
+BrandPerception
+BrandPerception_wide <- reshape2::dcast(BrandPerception, attributes ~ brands, value.var = "val")
+(BrandPerception_wide)
+
+
+brandScores <- colSums(fs$weights * BrandPerception_wide[,2]) #Nike,etc
+for (i in 3:11) {
+   brandScores <- rbind(brandScores,
+                        colSums(fs$weights * BrandPerception_wide[,i])) 
+}
+rownames(brandScores) <- brands
+brandScores
+
+
+
+
+# #(All data)
+# Brand_long$id <- 1:nrow(DATA)
+# Brand_wide <- reshape2::dcast(Brand_long, brands + id ~ attributes, value.var = "val")
+# Brand_wide
+# 
+# fs_nike <- factor.scores(x = Brand_wide[Brand_wide$brands=="Nike",-(1:2)],f = fa)
+# fs_nike
+# 
+# 
+# fs_converse <- factor.scores(x = Brand_wide[Brand_wide$brands=="Converse",-(1:2)],f = fa)
+# fs_converse
+# 
+# 
+# #(Mean)
+# BrandPerception
+# BrandPerception_wide <- reshape2::dcast(BrandPerception, brands  ~ attributes, value.var = "val")
+# BrandPerception_wide
+# BrandPerception_wide <- scale(BrandPerception_wide[,-1])
+# factor.scores(x = BrandPerception_wide,f = fa)
+# factor.scores(x = BrandPerception_wide[1,-1],f = fa)
+
+## My Extended Analysis
+
+```{r my_new_analysis, echo=TRUE}
+# Example: Correlation between price and purchase frequency
+cor.test(Respondent$TotalSpending, Respondent$PurchasePYear)
+
+# Or more advanced: visualize brand perception vs. spending
+library(ggplot2)
+ggplot(PurchaseCriteria, aes(x=`01. High Price 高價(+) vs Low Price 低價(-)`, 
+                             y=Respondent$TotalSpending)) +
+  geom_point() + geom_smooth(method="lm")
+
+
+
+
+```
+
+
+
+```{r head_to_head_chart, echo=FALSE, message=FALSE, warning=FALSE}
+
+
+# Load necessary libraries
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# Subset Owned and Currently Owned only
+own_current_plotdata <- Funnel_long %>%
+  filter(type %in% c("1.Owned", "2.CurrentlyOwn"),
+         brands %in% c("Nike", "Adidas", "Converse", "NewBalance"))
+
+# Plot grouped bar chart
+ggplot(own_current_plotdata, aes(x = type, y = val, fill = brands)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Owned vs Currently Owned Sneakers (4 Brands Only)",
+       x = "Stage",
+       y = "Average Number of Pairs",
+       fill = "Brand") +
+  theme_minimal()
+
+# Filter only Consideration data
+consider_data <- Funnel_long %>%
+  filter(type == "3.Consider", brands %in% c("Nike", "Adidas", "Converse", "NewBalance"))
+
+# Plot horizontal bar chart
+ggplot(consider_data, aes(x = val, y = reorder(brands, val), fill = brands)) +
+  geom_col() +
+  labs(title = "Consideration Rate (Nike, Adidas, Converse, New Balance)",
+       x = "Consideration Rate",
+       y = "Brand",
+       fill = "Brand") +
+  theme_minimal()
+
+
+```
